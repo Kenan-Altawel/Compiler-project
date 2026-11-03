@@ -1,251 +1,194 @@
 
 lexer grammar JavaScriptLexer;
 
-channels {
-    ERROR
-}
+// =====================================
+// 1. Reserved Keywords
+// =====================================
 
-options {
-    superClass = JavaScriptLexerBase;
-}
+BREAK       : 'break';
+CASE        : 'case';
+CATCH       : 'catch';
+CLASS       : 'class';
+CONST       : 'const';
+CONTINUE    : 'continue';
+DEBUGGER    : 'debugger';
+DEFAULT     : 'default';
+DELETE      : 'delete';
+DO          : 'do';
+ELSE        : 'else';
+EXPORT      : 'export';
+EXTENDS     : 'extends';
+FINALLY     : 'finally';
+FOR         : 'for';
+FUNCTION    : 'function';
+IF          : 'if';
+IMPORT      : 'import';
+IN          : 'in';
+INSTANCEOF  : 'instanceof';
+LET         : 'let';
+NEW         : 'new';
+RETURN      : 'return';
+SUPER       : 'super';
+SWITCH      : 'switch';
+THIS        : 'this';
+THROW       : 'throw';
+TRY         : 'try';
+TYPEOF      : 'typeof';
+VAR         : 'var';
+VOID        : 'void';
+WHILE       : 'while';
+WITH        : 'with';
+YIELD       : 'yield';
+ASYNC       : 'async';
+AWAIT       : 'await';
+OF          : 'of';
 
-// Insert here @header for C++ lexer.
+// =====================================
+// 2. Boolean and Null
+// =====================================
 
-HashBangLine      :                           { this.IsStartOfFile()}? '#!' ~[\r\n\u2028\u2029]*; // only allowed at start
-MultiLineComment  : '/*' .*? '*/'             -> channel(HIDDEN);
-SingleLineComment : '//' ~[\r\n\u2028\u2029]* -> channel(HIDDEN);
-RegularExpressionLiteral:
-    '/' RegularExpressionFirstChar RegularExpressionChar* {this.IsRegexPossible()}? '/' IdentifierPart*
-;
+TRUE        : 'true';
+FALSE       : 'false';
+NULL        : 'null';
 
-OpenBracket                : '[';
-CloseBracket               : ']';
-OpenParen                  : '(';
-CloseParen                 : ')';
-OpenBrace                  : '{' {this.ProcessOpenBrace();};
-TemplateCloseBrace         :     {this.IsInTemplateString()}? '}' // Break lines here to ensure proper transformation by Go/transformGrammar.py
-                                                                  {this.ProcessTemplateCloseBrace();} -> popMode;
-CloseBrace                 : '}' {this.ProcessCloseBrace();};
-SemiColon                  : ';';
-Comma                      : ',';
-Assign                     : '=';
-QuestionMark               : '?';
-QuestionMarkDot            : '?.';
-Colon                      : ':';
-Ellipsis                   : '...';
-Dot                        : '.';
-PlusPlus                   : '++';
-MinusMinus                 : '--';
-Plus                       : '+';
-Minus                      : '-';
-BitNot                     : '~';
-Not                        : '!';
-Multiply                   : '*';
-Divide                     : '/';
-Modulus                    : '%';
-Power                      : '**';
-NullCoalesce               : '??';
-Hashtag                    : '#';
-RightShiftArithmetic       : '>>';
-LeftShiftArithmetic        : '<<';
-RightShiftLogical          : '>>>';
-LessThan                   : '<';
-MoreThan                   : '>';
-LessThanEquals             : '<=';
-GreaterThanEquals          : '>=';
-Equals_                    : '==';
-NotEquals                  : '!=';
-IdentityEquals             : '===';
-IdentityNotEquals          : '!==';
-BitAnd                     : '&';
-BitXOr                     : '^';
-BitOr                      : '|';
-And                        : '&&';
-Or                         : '||';
-MultiplyAssign             : '*=';
-DivideAssign               : '/=';
-ModulusAssign              : '%=';
-PlusAssign                 : '+=';
-MinusAssign                : '-=';
-LeftShiftArithmeticAssign  : '<<=';
-RightShiftArithmeticAssign : '>>=';
-RightShiftLogicalAssign    : '>>>=';
-BitAndAssign               : '&=';
-BitXorAssign               : '^=';
-BitOrAssign                : '|=';
-PowerAssign                : '**=';
-NullishCoalescingAssign    : '??=';
-ARROW                      : '=>';
+// =====================================
+// 3. Numbers
+// =====================================
 
-/// Null Literals
+// Integer
+INTEGER
+    : [0-9]+
+    ;
 
-NullLiteral: 'null';
+// Float
+FLOAT
+    : [0-9]+ '.' [0-9]+
+    ;
 
-/// Boolean Literals
+// Hexadecimal
+HEX_NUMBER
+    : '0' [xX] [0-9a-fA-F]+
+    ;
 
-BooleanLiteral: 'true' | 'false';
+// Octal
+OCTAL_NUMBER
+    : '0' [oO] [0-7]+
+    ;
 
-/// Numeric Literals
+// Binary
+BINARY_NUMBER
+    : '0' [bB] [01]+
+    ;
 
-DecimalLiteral:
-    DecimalIntegerLiteral '.' [0-9] [0-9_]* ExponentPart?
-    | '.' [0-9] [0-9_]* ExponentPart?
-    | DecimalIntegerLiteral ExponentPart?
-;
+// BigInt
+BIGINT
+    : ([0-9]+ | '0' [xX] [0-9a-fA-F]+) 'n'
+    ;
 
-/// Numeric Literals
+// =====================================
+// 4. String Literals
+// =====================================
 
-HexIntegerLiteral    : '0' [xX] [0-9a-fA-F] HexDigit*;
-OctalIntegerLiteral  : '0' [0-7]+ {!this.IsStrictMode()}?;
-OctalIntegerLiteral2 : '0' [oO] [0-7] [_0-7]*;
-BinaryIntegerLiteral : '0' [bB] [01] [_01]*;
+STRING
+    : '"' (ESCAPE_SEQUENCE | ~["\\\r\n])* '"'
+    | '\'' (ESCAPE_SEQUENCE | ~['\\\r\n])* '\''
+    ;
 
-BigHexIntegerLiteral     : '0' [xX] [0-9a-fA-F] HexDigit* 'n';
-BigOctalIntegerLiteral   : '0' [oO] [0-7] [_0-7]* 'n';
-BigBinaryIntegerLiteral  : '0' [bB] [01] [_01]* 'n';
-BigDecimalIntegerLiteral : DecimalIntegerLiteral 'n';
+fragment ESCAPE_SEQUENCE
+    : '\\' .
+    ;
 
-/// Keywords
+// =====================================
+// 5. Template Literals
+// =====================================
 
-Break      : 'break';
-Do         : 'do';
-Instanceof : 'instanceof';
-Typeof     : 'typeof';
-Case       : 'case';
-Else       : 'else';
-New        : 'new';
-Var        : 'var';
-Catch      : 'catch';
-Finally    : 'finally';
-Return     : 'return';
-Void       : 'void';
-Continue   : 'continue';
-For        : 'for';
-Switch     : 'switch';
-While      : 'while';
-Debugger   : 'debugger';
-Function_  : 'function';
-This       : 'this';
-With       : 'with';
-Default    : 'default';
-If         : 'if';
-Throw      : 'throw';
-Delete     : 'delete';
-In         : 'in';
-Try        : 'try';
-As         : 'as';
-From       : 'from';
-Of         : 'of';
-Yield      : 'yield';
-YieldStar  : 'yield*';
+TEMPLATE_LITERAL
+    : '`' .*? '`'
+    ;
 
-/// Future Reserved Words
+// =====================================
+// 6. Identifiers
+// =====================================
 
-Class   : 'class';
-Enum    : 'enum';
-Extends : 'extends';
-Super   : 'super';
-Const   : 'const';
-Export  : 'export';
-Import  : 'import';
+IDENTIFIER
+    : [a-zA-Z_$] [a-zA-Z0-9_$]*
+    ;
 
-Async : 'async';
-Await : 'await';
+// =====================================
+// 7. Operators
+// =====================================
 
-/// The following tokens are also considered to be FutureReservedWords
-/// when parsing strict mode
+STRICT_EQUAL     : '===';
+STRICT_NOT_EQUAL : '!==';
 
-Implements   : 'implements' {this.IsStrictMode()}?;
-StrictLet    : 'let'        {this.IsStrictMode()}?;
-NonStrictLet : 'let'        {!this.IsStrictMode()}?;
-Private      : 'private'    {this.IsStrictMode()}?;
-Public       : 'public'     {this.IsStrictMode()}?;
-Interface    : 'interface'  {this.IsStrictMode()}?;
-Package      : 'package'    {this.IsStrictMode()}?;
-Protected    : 'protected'  {this.IsStrictMode()}?;
-Static       : 'static'     {this.IsStrictMode()}?;
+INCREMENT        : '++';
+DECREMENT        : '--';
 
-/// Identifier Names and Identifiers
+ARROW            : '=>';
 
-Identifier: IdentifierStart IdentifierPart*;
-/// String Literals
-StringLiteral:
-    ('"' DoubleStringCharacter* '"' | '\'' SingleStringCharacter* '\'') {this.ProcessStringLiteral();}
-;
+PLUS_ASSIGN      : '+=';
+MINUS_ASSIGN     : '-=';
+MULT_ASSIGN      : '*=';
+DIV_ASSIGN       : '/=';
 
-BackTick: '`' -> pushMode(TEMPLATE);
+AND              : '&&';
+OR               : '||';
+NOT              : '!';
 
-WhiteSpaces: [\t\u000B\u000C\u0020\u00A0]+ -> channel(HIDDEN);
+EQUAL            : '==';
+NOT_EQUAL        : '!=';
 
-LineTerminator: [\r\n\u2028\u2029] -> channel(HIDDEN);
+LESS_EQUAL       : '<=';
+GREATER_EQUAL    : '>=';
 
-/// Comments
+PLUS             : '+';
+MINUS            : '-';
+MULT             : '*';
+DIV              : '/';
+MOD              : '%';
 
-HtmlComment         : '<!--' .*? '-->'      -> channel(HIDDEN);
-CDataComment        : '<![CDATA[' .*? ']]>' -> channel(HIDDEN);
-UnexpectedCharacter : .                     -> channel(ERROR);
+ASSIGN           : '=';
+LESS             : '<';
+GREATER          : '>';
 
-mode TEMPLATE;
+QUESTION         : '?';
+OPTIONAL_CHAIN   : '?.';
+NULLISH          : '??';
 
-BackTickInside                : '`' -> type(BackTick), popMode;
-TemplateStringStartExpression : '${' {this.ProcessTemplateOpenBrace();} -> pushMode(DEFAULT_MODE);
-TemplateStringAtom            : ~[`];
+// =====================================
+// 8. Punctuation
+// =====================================
 
-// Fragment rules
+DOT              : '.';
+COMMA            : ',';
+SEMICOLON        : ';';
+COLON            : ':';
 
-fragment DoubleStringCharacter: ~["\\\r\n] | '\\' EscapeSequence | LineContinuation;
+LPAREN           : '(';
+RPAREN           : ')';
 
-fragment SingleStringCharacter: ~['\\\r\n] | '\\' EscapeSequence | LineContinuation;
+LBRACE           : '{';
+RBRACE           : '}';
 
-fragment EscapeSequence:
-    CharacterEscapeSequence
-    | '0' // no digit ahead! TODO
-    | HexEscapeSequence
-    | UnicodeEscapeSequence
-    | ExtendedUnicodeEscapeSequence
-;
+LBRACK           : '[';
+RBRACK           : ']';
 
-fragment CharacterEscapeSequence: SingleEscapeCharacter | NonEscapeCharacter;
+// =====================================
+// 9. Comments
+// =====================================
 
-fragment HexEscapeSequence: 'x' HexDigit HexDigit;
+SINGLE_LINE_COMMENT
+    : '//' ~[\r\n]* -> skip
+    ;
 
-fragment UnicodeEscapeSequence:
-    'u' HexDigit HexDigit HexDigit HexDigit
-    | 'u' '{' HexDigit HexDigit+ '}'
-;
+MULTI_LINE_COMMENT
+    : '/*' .*? '*/' -> skip
+    ;
 
-fragment ExtendedUnicodeEscapeSequence: 'u' '{' HexDigit+ '}';
+// =====================================
+// 10. Whitespace
+// =====================================
 
-fragment SingleEscapeCharacter: ['"\\bfnrtv];
-
-fragment NonEscapeCharacter: ~['"\\bfnrtv0-9xu\r\n];
-
-fragment EscapeCharacter: SingleEscapeCharacter | [0-9] | [xu];
-
-fragment LineContinuation: '\\' [\r\n\u2028\u2029]+;
-
-fragment HexDigit: [_0-9a-fA-F];
-
-fragment DecimalIntegerLiteral: '0' | [1-9] [0-9_]*;
-
-fragment ExponentPart: [eE] [+-]? [0-9_]+;
-
-fragment IdentifierPart: IdentifierStart | [\p{Mn}] | [\p{Nd}] | [\p{Pc}] | '\u200C' | '\u200D';
-
-fragment IdentifierStart: [\p{L}] | [$_] | '\\' UnicodeEscapeSequence;
-
-fragment RegularExpressionFirstChar:
-    ~[*\r\n\u2028\u2029\\/[]
-    | RegularExpressionBackslashSequence
-    | '[' RegularExpressionClassChar* ']'
-;
-
-fragment RegularExpressionChar:
-    ~[\r\n\u2028\u2029\\/[]
-    | RegularExpressionBackslashSequence
-    | '[' RegularExpressionClassChar* ']'
-;
-
-fragment RegularExpressionClassChar: ~[\r\n\u2028\u2029\]\\] | RegularExpressionBackslashSequence;
-
-fragment RegularExpressionBackslashSequence: '\\' ~[\r\n\u2028\u2029];
+WHITESPACE
+    : [ \t\r\n]+ -> skip
+    ;
