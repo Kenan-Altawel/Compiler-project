@@ -27,38 +27,28 @@ channels {
     private boolean regexAllowed = true;
     private boolean controlParenClosed;
     private int lastSignificantTokenType = Token.INVALID_TYPE;
-    private org.antlr.v4.runtime.Token pendingErrorToken;
+    private boolean eofChecked;
 
+    // The file ended while a template literal (or a ${ ... } inside it) was still open.
+    // Template mode has no "more" command, so an EOF rule can never fire there;
+    // instead we hand out ONE error token just before the final EOF token.
     @Override
-    public org.antlr.v4.runtime.Token nextToken() {
-        if (pendingErrorToken != null) {
-            org.antlr.v4.runtime.Token token = pendingErrorToken;
-            pendingErrorToken = null;
-            return token;
+    public org.antlr.v4.runtime.Token emitEOF() {
+        if (!eofChecked) {
+            eofChecked = true;
+            if (_mode == TEMPLATE_MODE || !templateExpressionBraceDepths.isEmpty()) {
+                org.antlr.v4.runtime.CommonToken error =
+                    new org.antlr.v4.runtime.CommonToken(UNTERMINATED_TEMPLATE, "");
+                error.setChannel(ERRORS);
+                error.setLine(getLine());
+                error.setCharPositionInLine(getCharPositionInLine());
+                error.setStartIndex(_input.index());
+                error.setStopIndex(_input.index() - 1);
+                emit(error);
+                return error;
+            }
         }
-        return super.nextToken();
-    }
-
-    private void queueUnterminatedTemplateError() {
-        if (_input.LA(1) != org.antlr.v4.runtime.IntStream.EOF
-                || _mode != DEFAULT_MODE
-                || templateExpressionBraceDepths.isEmpty()) {
-            return;
-        }
-
-        reportLexicalError("Unterminated template expression", 0);
-        org.antlr.v4.runtime.CommonToken error =
-            new org.antlr.v4.runtime.CommonToken(UNTERMINATED_TEMPLATE, "");
-        error.setChannel(ERRORS);
-        error.setLine(getLine());
-        error.setCharPositionInLine(getCharPositionInLine());
-        error.setStartIndex(_input.index());
-        error.setStopIndex(_input.index() - 1);
-        pendingErrorToken = error;
-        templateExpressionBraceDepths.clear();
-        controlParentheses.clear();
-        _modeStack.clear();
-        mode(DEFAULT_MODE);
+        return super.emitEOF();
     }
 
     private void reportLexicalError(String message, int width) {
@@ -79,7 +69,6 @@ channels {
             regexAllowed = controlParenClosed;
             controlParenClosed = false;
             lastSignificantTokenType = token.getType();
-            queueUnterminatedTemplateError();
             return token;
         }
 
@@ -112,7 +101,6 @@ channels {
                 break;
         }
         lastSignificantTokenType = token.getType();
-        queueUnterminatedTemplateError();
         return token;
     }
 }
@@ -346,36 +334,7 @@ SINGLE_LINE_COMMENT
 // ==========================================
 
 WS
-    : [ \t\r\n\u000C\u2028\u2029]+ {
-        if (_input.LA(1) == org.antlr.v4.runtime.IntStream.EOF
-                && !templateExpressionBraceDepths.isEmpty()) {
-            setType(UNTERMINATED_TEMPLATE);
-            setChannel(ERRORS);
-            reportLexicalError("Unterminated template expression", 0);
-            templateExpressionBraceDepths.clear();
-            controlParentheses.clear();
-            _modeStack.clear();
-            mode(DEFAULT_MODE);
-        } else {
-            skip();
-        }
-      }
-    ;
-
-TEMPLATE_EXPR_EOF
-    : EOF {
-        if (!templateExpressionBraceDepths.isEmpty()) {
-            setType(UNTERMINATED_TEMPLATE);
-            setChannel(ERRORS);
-            reportLexicalError("Unterminated template expression", 0);
-            templateExpressionBraceDepths.clear();
-            controlParentheses.clear();
-            _modeStack.clear();
-            mode(DEFAULT_MODE);
-        } else {
-            setType(org.antlr.v4.runtime.Token.EOF);
-        }
-      }
+    : [ \t\r\n\u000C\u2028\u2029]+ -> skip
     ;
 
 // ==========================================
@@ -559,10 +518,6 @@ TEMPLATE_TEXT
     : ~[`\\$]+
     ;
 
-TEMPLATE_EOF
-    : EOF -> type(UNTERMINATED_TEMPLATE), channel(ERRORS), popMode
-    ;
-
 TEMPLATE_DOLLAR
     : '$' -> type(TEMPLATE_TEXT)
     ;
@@ -618,10 +573,7 @@ REGEX_ESCAPE
     ;
 
 REGEX_LINE_TERMINATOR
-    : [\r\n\u2028\u2029] {
-        reportLexicalError("Unterminated regular expression literal", 1);
-        popMode();
-      } -> type(UNTERMINATED_REGEX), channel(ERRORS)
+    : [\r\n\u2028\u2029] -> type(UNTERMINATED_REGEX), channel(ERRORS), popMode
     ;
 
 REGEX_CHAR
@@ -644,7 +596,6 @@ REGEX_CLASS_ESCAPE
 
 REGEX_CLASS_LINE_TERMINATOR
     : [\r\n\u2028\u2029] {
-        reportLexicalError("Unterminated regular expression character class", 1);
         popMode();
         popMode();
       } -> type(UNTERMINATED_REGEX), channel(ERRORS)
