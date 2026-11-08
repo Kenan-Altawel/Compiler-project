@@ -1,4 +1,4 @@
-// Generated from /home/kenan/IdeaProjects/Compiler-project/grammar/JavaScriptLexer.g4 by ANTLR 4.13.2
+// Generated from grammar/JavaScriptLexer.g4 by ANTLR 4.13.2
 import org.antlr.v4.runtime.Lexer;
 import org.antlr.v4.runtime.CharStream;
 import org.antlr.v4.runtime.Token;
