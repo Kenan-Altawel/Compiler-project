@@ -1,10 +1,9 @@
 # ANTLR generated files
 gen/
 
-# Compiled output (keep .gitkeep so the folder stays in git)
-output/*
-!output/.gitkeep
-output/classes/
+# Compiled output (keep the folders, ignore what's inside classes)
+output/classes/*
+!output/classes/.gitkeep
 *.class
 
 # Logs (includes hs_err_pid*.log)
