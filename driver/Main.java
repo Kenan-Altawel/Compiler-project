@@ -1,4 +1,5 @@
 import org.antlr.v4.runtime.*;
+import org.antlr.v4.runtime.misc.Interval;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
@@ -8,13 +9,20 @@ import java.util.*;
  * Phase 1 driver: runs JavaScriptLexer on a .js file and prints
  *   --- Tokens Found ---
  *   Text: [lexeme] -> Type: NAME (line:column)
+ *   --- Total Tokens: N ---
  *   --- Lexical Errors: N ---
  *   Error at line:column message
+ *
+ * A whole template literal (from the opening backtick to the closing one,
+ * including any ${...} parts and nested templates) is printed as ONE token
+ * of type TEMPLATE_LITERAL.
  */
 public class Main {
 
     // false -> 1:9  (line:column)      true -> 9:1  (column:line)
     private static final boolean COLUMN_FIRST = false;
+
+    private static final String TEMPLATE_LITERAL_NAME = "TEMPLATE_LITERAL";
 
     private static String pos(int line, int col) {
         return COLUMN_FIRST ? col + ":" + line : line + ":" + col;
@@ -44,20 +52,33 @@ public class Main {
             }
         });
 
+        CharStream input = lexer.getInputStream();
         Vocabulary vocab = lexer.getVocabulary();
         List<String> found = new ArrayList<String>();
         List<Err> errors = new ArrayList<Err>();
         Set<String> used = new HashSet<String>();
-        Deque<int[]> templateStarts = new ArrayDeque<int[]>();   // where each open backtick began
+        // Every open backtick: {line, column, startIndex}. The bottom of the stack is the outermost one.
+        Deque<int[]> templateStarts = new ArrayDeque<int[]>();
 
         for (Token t = lexer.nextToken(); t.getType() != Token.EOF; t = lexer.nextToken()) {
             int line = t.getLine();
             int col = t.getCharPositionInLine() + 1;
 
+            // ---- template literal: merge everything between the outer backticks into one token ----
+            boolean closedOuterTemplate = false;
+            int[] outer = null;
             if (t.getType() == JavaScriptLexer.TEMPLATE_START) {
-                templateStarts.push(new int[]{line, col});
+                templateStarts.push(new int[]{line, col, t.getStartIndex()});
             } else if (t.getType() == JavaScriptLexer.TEMPLATE_END && !templateStarts.isEmpty()) {
-                templateStarts.pop();
+                outer = templateStarts.pop();
+                closedOuterTemplate = templateStarts.isEmpty();
+            }
+
+            if (closedOuterTemplate) {
+                String text = input.getText(Interval.of(outer[2], t.getStopIndex()));
+                found.add("Text: [" + show(text) + "] -> Type: " + TEMPLATE_LITERAL_NAME
+                        + " (" + pos(outer[0], outer[1]) + ")");
+                continue;
             }
 
             if (t.getChannel() == JavaScriptLexer.ERRORS) {
@@ -71,11 +92,13 @@ public class Main {
                     templateStarts.clear();
                 }
                 errors.add(new Err(line, col, msg));
-            } else {
+            } else if (templateStarts.isEmpty()) {
+                // a normal token, outside of any template literal
                 String name = vocab.getSymbolicName(t.getType());
                 found.add("Text: [" + show(t.getText()) + "] -> Type: " + name
                         + " (" + pos(line, col) + ")");
             }
+            // else: a piece inside a template literal -> already part of the merged token
         }
 
         for (Map.Entry<String, String> e : reported.entrySet()) {
@@ -91,6 +114,7 @@ public class Main {
 
         System.out.println("--- Tokens Found ---");
         for (String s : found) System.out.println(s);
+        System.out.println("--- Total Tokens: " + found.size() + " ---");
         System.out.println("--- Lexical Errors: " + errors.size() + " ---");
         for (Err e : errors) System.out.println("Error at " + pos(e.line, e.col) + " " + e.msg);
     }
