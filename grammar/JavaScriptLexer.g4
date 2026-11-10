@@ -1,5 +1,109 @@
-
 lexer grammar JavaScriptLexer;
+
+tokens {
+    DQ_STRING,
+    SQ_STRING,
+    REGEX_LITERAL,
+    BLOCK_COMMENT,
+    JSDOC_COMMENT,
+    UNTERMINATED_STRING,
+    UNTERMINATED_TEMPLATE,
+    UNTERMINATED_COMMENT,
+    UNTERMINATED_REGEX,
+    INVALID_ESCAPE,
+    TEMPLATE_EXPR_END
+}
+
+channels {
+    COMMENTS,
+    ERRORS
+}
+
+@members {
+    private final java.util.Deque<Integer> templateExpressionBraceDepths =
+        new java.util.ArrayDeque<Integer>();
+    private final java.util.Deque<Boolean> controlParentheses =
+        new java.util.ArrayDeque<Boolean>();
+    private boolean regexAllowed = true;
+    private boolean controlParenClosed;
+    private int lastSignificantTokenType = Token.INVALID_TYPE;
+    private boolean eofChecked;
+
+    // The file ended while a template literal (or a ${ ... } inside it) was still open.
+    // Template mode has no "more" command, so an EOF rule can never fire there;
+    // instead we hand out ONE error token just before the final EOF token.
+    @Override
+    public org.antlr.v4.runtime.Token emitEOF() {
+        if (!eofChecked) {
+            eofChecked = true;
+            if (_mode == TEMPLATE_MODE || !templateExpressionBraceDepths.isEmpty()) {
+                org.antlr.v4.runtime.CommonToken error =
+                    new org.antlr.v4.runtime.CommonToken(UNTERMINATED_TEMPLATE, "");
+                error.setChannel(ERRORS);
+                error.setLine(getLine());
+                error.setCharPositionInLine(getCharPositionInLine());
+                error.setStartIndex(_input.index());
+                error.setStopIndex(_input.index() - 1);
+                emit(error);
+                return error;
+            }
+        }
+        return super.emitEOF();
+    }
+
+    private void reportLexicalError(String message, int width) {
+        int column = Math.max(0, getCharPositionInLine() - width);
+        getErrorListenerDispatch().syntaxError(
+            this, null, getLine(), column, message, null
+        );
+    }
+
+    @Override
+    public org.antlr.v4.runtime.Token emit() {
+        org.antlr.v4.runtime.Token token = super.emit();
+        if (token.getChannel() != org.antlr.v4.runtime.Token.DEFAULT_CHANNEL) {
+            return token;
+        }
+
+        if (token.getType() == RPAREN) {
+            regexAllowed = controlParenClosed;
+            controlParenClosed = false;
+            lastSignificantTokenType = token.getType();
+            return token;
+        }
+
+        switch (token.getType()) {
+            case IDENTIFIER:
+            case INTEGER:
+            case FLOAT:
+            case BIGINT:
+            case HEX_NUMBER:
+            case OCTAL_NUMBER:
+            case BINARY_NUMBER:
+            case DQ_STRING:
+            case SQ_STRING:
+            case TRUE:
+            case FALSE:
+            case NULL:
+            case THIS:
+            case SUPER:
+            case REGEX_LITERAL:
+            case TEMPLATE_END:
+            case RBRACKET:
+            case RBRACE:
+            case TEMPLATE_EXPR_END:
+            case INCREMENT:
+            case DECREMENT:
+                regexAllowed = false;
+                break;
+            default:
+                regexAllowed = true;
+                break;
+        }
+        lastSignificantTokenType = token.getType();
+        return token;
+    }
+}
 
 // ==========================================
 // 1. Reserved Keywords
@@ -46,16 +150,12 @@ ASYNC       : 'async';
 OF          : 'of';
 
 // ==========================================
-// 2. Boolean and Null
+// 2. Boolean, null, and numeric literals
 // ==========================================
 
 TRUE        : 'true';
 FALSE       : 'false';
 NULL        : 'null';
-
-// ==========================================
-// 3. Numbers
-// ==========================================
 
 BIGINT
     : (HEX_LITERAL | BINARY_LITERAL | OCTAL_LITERAL | DECIMAL_INTEGER) 'n'
@@ -84,24 +184,27 @@ INTEGER
     ;
 
 // ==========================================
-// 4. Strings
+// 3. Quoted strings
 // ==========================================
 
-STRING
-    : '"' (ESCAPE_SEQUENCE | ~["\\\r\n])* '"'
-    | '\'' (ESCAPE_SEQUENCE | ~['\\\r\n])* '\''
+DQ_STRING_START
+    : '"' -> more, pushMode(DQ_STRING_MODE)
+    ;
+
+SQ_STRING_START
+    : '\'' -> more, pushMode(SQ_STRING_MODE)
     ;
 
 // ==========================================
-// 5. Template Literals
+// 4. Template literals
 // ==========================================
 
-TEMPLATE_LITERAL
-    : '`' (ESCAPE_SEQUENCE | ~[`\\])* '`'
+TEMPLATE_START
+    : '`' -> pushMode(TEMPLATE_MODE)
     ;
 
 // ==========================================
-// 6. Operators
+// 5. Operators
 // ==========================================
 
 STRICT_EQUAL       : '===';
@@ -112,8 +215,8 @@ GREATER_EQUAL      : '>=';
 LESS_EQUAL         : '<=';
 INCREMENT          : '++';
 DECREMENT          : '--';
-POWER              : '**';
 EXP_ASSIGN         : '**=';
+POWER              : '**';
 PLUS_ASSIGN        : '+=';
 MINUS_ASSIGN       : '-=';
 MULT_ASSIGN        : '*=';
@@ -133,11 +236,13 @@ LOGICAL_OR         : '||';
 NULLISH            : '??';
 OPTIONAL_CHAIN     : '?.';
 ARROW              : '=>';
+BIT_AND_ASSIGN     : '&=';
+BIT_OR_ASSIGN      : '|=';
+BIT_XOR_ASSIGN     : '^=';
 
 PLUS               : '+';
 MINUS              : '-';
 MULT               : '*';
-DIV                : '/';
 MOD                : '%';
 ASSIGN             : '=';
 GREATER            : '>';
@@ -150,58 +255,99 @@ BIT_NOT            : '~';
 QUESTION           : '?';
 COLON              : ':';
 
+REGEX_START
+    : {regexAllowed}? '/' -> more, pushMode(REGEX_MODE)
+    ;
+
+DIV
+    : '/'
+    ;
+
 // ==========================================
-// 7. Punctuation
+// 6. Punctuation and identifiers
 // ==========================================
 
-LPAREN       : '(';
-RPAREN       : ')';
-LBRACE       : '{';
-RBRACE       : '}';
+LPAREN       : '(' {
+    controlParentheses.push(
+        lastSignificantTokenType == IF
+        || lastSignificantTokenType == WHILE
+        || lastSignificantTokenType == FOR
+        || lastSignificantTokenType == WITH
+        || lastSignificantTokenType == SWITCH
+        || lastSignificantTokenType == CATCH
+    );
+};
+RPAREN       : ')' {
+    controlParenClosed =
+        !controlParentheses.isEmpty() && controlParentheses.pop();
+};
+LBRACE       : '{' {
+    if (!templateExpressionBraceDepths.isEmpty()) {
+        int depth = templateExpressionBraceDepths.pop();
+        templateExpressionBraceDepths.push(depth + 1);
+    }
+};
+RBRACE       : '}' {
+    if (!templateExpressionBraceDepths.isEmpty()) {
+        int depth = templateExpressionBraceDepths.pop();
+        if (depth == 0) {
+            setType(TEMPLATE_EXPR_END);
+            popMode();
+        } else {
+            templateExpressionBraceDepths.push(depth - 1);
+        }
+    }
+};
 LBRACKET     : '[';
 RBRACKET     : ']';
 SEMICOLON    : ';';
 COMMA        : ',';
+ELLIPSIS     : '...';
 DOT          : '.';
-
-// ==========================================
-// 8. Identifiers
-// ==========================================
 
 IDENTIFIER
     : ID_START ID_PART*
     ;
 
 // ==========================================
-// 9. Comments
+// 7. Comments
 // ==========================================
+
+EMPTY_JSDOC
+    : '/**/' -> type(JSDOC_COMMENT), channel(COMMENTS)
+    ;
+
+JSDOC_START
+    : '/**' -> more, pushMode(JSDOC_MODE)
+    ;
+
+BLOCK_COMMENT_START
+    : '/*' -> more, pushMode(BLOCK_COMMENT_MODE)
+    ;
 
 SINGLE_LINE_COMMENT
-    : '//' ~[\r\n]* -> skip
-    ;
-
-MULTI_LINE_COMMENT
-    : '/*' .*? '*/' -> skip
+    : '//' ~[\r\n\u2028\u2029]* -> channel(COMMENTS)
     ;
 
 // ==========================================
-// 10. Whitespace
+// 8. Whitespace
 // ==========================================
 
 WS
-    : [ \t\r\n\u000C]+ -> skip
+    : [ \t\r\n\u000C\u2028\u2029]+ -> skip
     ;
 
 // ==========================================
-// 11. Invalid Characters
+// 9. Error recovery
+// Keep this fallback last among the default-mode rules.
 // ==========================================
 
 INVALID_CHAR
-    : .
+    : . -> channel(ERRORS)
     ;
 
 // ==========================================
-// Fragments
+// Shared fragments
 // ==========================================
 
 fragment DECIMAL_INTEGER
@@ -229,9 +375,21 @@ fragment EXPONENT
     : [eE] [+-]? [0-9]+
     ;
 
-fragment ESCAPE_SEQUENCE
-    : '\\' .
-    | '\\' '\r'? '\n'
+fragment HEX_DIGIT_1_TO_6
+    : HEX_DIGIT HEX_DIGIT? HEX_DIGIT? HEX_DIGIT? HEX_DIGIT? HEX_DIGIT?
+    ;
+
+fragment VALID_ESCAPE_SEQUENCE
+    : '\\' (
+        [btnvfr0\\'"`/$]
+        | 'x' HEX_DIGIT HEX_DIGIT
+        | 'u' HEX_DIGIT HEX_DIGIT HEX_DIGIT HEX_DIGIT
+        | 'u{' HEX_DIGIT_1_TO_6 '}'
+        | '\r'? '\n'
+        | '\r'
+        | '\u2028'
+        | '\u2029'
+    )
     ;
 
 fragment ID_START
@@ -240,4 +398,216 @@ fragment ID_START
 
 fragment ID_PART
     : [a-zA-Z0-9_$]
+    ;
+
+// ==========================================
+// 10. String modes
+// ==========================================
+
+mode DQ_STRING_MODE;
+
+DQ_STRING_END
+    : '"' -> type(DQ_STRING), popMode
+    ;
+
+DQ_STRING_ESCAPE
+    : VALID_ESCAPE_SEQUENCE -> more
+    ;
+
+DQ_STRING_INVALID_ESCAPE
+    : '\\' ~[\r\n\u2028\u2029] {
+        reportLexicalError("Invalid escape sequence in double-quoted string", 2);
+      } -> more
+    ;
+
+DQ_STRING_DANGLING_ESCAPE
+    : '\\' {
+        reportLexicalError("Incomplete escape sequence in double-quoted string", 1);
+      } -> more
+    ;
+
+DQ_STRING_LINE_TERMINATOR
+    : (
+        '\r'? '\n'
+        | '\r'
+        | '\u2028'
+        | '\u2029'
+      ) -> type(UNTERMINATED_STRING), channel(ERRORS), popMode
+    ;
+
+DQ_STRING_CHAR
+    : ~["\\\r\n\u2028\u2029]+ -> more
+    ;
+
+DQ_STRING_EOF
+    : EOF -> type(UNTERMINATED_STRING), channel(ERRORS), popMode
+    ;
+
+mode SQ_STRING_MODE;
+
+SQ_STRING_END
+    : '\'' -> type(SQ_STRING), popMode
+    ;
+
+SQ_STRING_ESCAPE
+    : VALID_ESCAPE_SEQUENCE -> more
+    ;
+
+SQ_STRING_INVALID_ESCAPE
+    : '\\' ~[\r\n\u2028\u2029] {
+        reportLexicalError("Invalid escape sequence in single-quoted string", 2);
+      } -> more
+    ;
+
+SQ_STRING_DANGLING_ESCAPE
+    : '\\' {
+        reportLexicalError("Incomplete escape sequence in single-quoted string", 1);
+      } -> more
+    ;
+
+SQ_STRING_LINE_TERMINATOR
+    : (
+        '\r'? '\n'
+        | '\r'
+        | '\u2028'
+        | '\u2029'
+      ) -> type(UNTERMINATED_STRING), channel(ERRORS), popMode
+    ;
+
+SQ_STRING_CHAR
+    : ~['\\\r\n\u2028\u2029]+ -> more
+    ;
+
+SQ_STRING_EOF
+    : EOF -> type(UNTERMINATED_STRING), channel(ERRORS), popMode
+    ;
+
+// ==========================================
+// Template mode and template-expression state
+// ==========================================
+
+mode TEMPLATE_MODE;
+
+TEMPLATE_END
+    : '`' -> popMode
+    ;
+
+TEMPLATE_EXPR_START
+    : '${' {
+        templateExpressionBraceDepths.push(0);
+      } -> pushMode(DEFAULT_MODE)
+    ;
+
+TEMPLATE_ESCAPE
+    : VALID_ESCAPE_SEQUENCE -> type(TEMPLATE_TEXT)
+    ;
+
+TEMPLATE_INVALID_ESCAPE
+    : '\\' ~[\r\n\u2028\u2029] {
+        reportLexicalError("Invalid escape sequence in template literal", 2);
+      } -> type(INVALID_ESCAPE), channel(ERRORS)
+    ;
+
+TEMPLATE_DANGLING_ESCAPE
+    : '\\' {
+        reportLexicalError("Incomplete escape sequence in template literal", 1);
+      } -> type(INVALID_ESCAPE), channel(ERRORS)
+    ;
+
+TEMPLATE_TEXT
+    : ~[`\\$]+
+    ;
+
+TEMPLATE_DOLLAR
+    : '$' -> type(TEMPLATE_TEXT)
+    ;
+
+// ==========================================
+// Block-comment and JSDoc modes
+// ==========================================
+
+mode BLOCK_COMMENT_MODE;
+
+BLOCK_COMMENT_END
+    : '*/' -> type(BLOCK_COMMENT), channel(COMMENTS), popMode
+    ;
+
+BLOCK_COMMENT_CHAR
+    : . -> more
+    ;
+
+BLOCK_COMMENT_EOF
+    : EOF -> type(UNTERMINATED_COMMENT), channel(ERRORS), popMode
+    ;
+
+mode JSDOC_MODE;
+
+JSDOC_END
+    : '*/' -> type(JSDOC_COMMENT), channel(COMMENTS), popMode
+    ;
+
+JSDOC_CHAR
+    : . -> more
+    ;
+
+JSDOC_EOF
+    : EOF -> type(UNTERMINATED_COMMENT), channel(ERRORS), popMode
+    ;
+
+// ==========================================
+// Regular-expression and character-class modes
+// ==========================================
+
+mode REGEX_MODE;
+
+REGEX_END
+    : '/' [a-zA-Z]* -> type(REGEX_LITERAL), popMode
+    ;
+
+REGEX_CLASS_START
+    : '[' -> more, pushMode(REGEX_CLASS_MODE)
+    ;
+
+REGEX_ESCAPE
+    : '\\' ~[\r\n\u2028\u2029] -> more
+    ;
+
+REGEX_LINE_TERMINATOR
+    : [\r\n\u2028\u2029] -> type(UNTERMINATED_REGEX), channel(ERRORS), popMode
+    ;
+
+REGEX_CHAR
+    : . -> more
+    ;
+
+REGEX_EOF
+    : EOF -> type(UNTERMINATED_REGEX), channel(ERRORS), popMode
+    ;
+
+mode REGEX_CLASS_MODE;
+
+REGEX_CLASS_END
+    : ']' -> more, popMode
+    ;
+
+REGEX_CLASS_ESCAPE
+    : '\\' ~[\r\n\u2028\u2029] -> more
+    ;
+
+REGEX_CLASS_LINE_TERMINATOR
+    : [\r\n\u2028\u2029] {
+        popMode();
+        popMode();
+      } -> type(UNTERMINATED_REGEX), channel(ERRORS)
+    ;
+
+REGEX_CLASS_CHAR
+    : . -> more
+    ;
+
+REGEX_CLASS_EOF
+    : EOF {
+        popMode();
+        popMode();
+      } -> type(UNTERMINATED_REGEX), channel(ERRORS)
     ;

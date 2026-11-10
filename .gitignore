@@ -1,4 +1,15 @@
-generated/
-output/
+# ANTLR generated files
+gen/
+
+# Compiled output (keep the folders, ignore what's inside classes)
+output/classes/*
+!output/classes/.gitkeep
+*.class
+
+# Logs (includes hs_err_pid*.log)
+*.log
+hs_err_pid*
+
+# IDE / dependencies
 .idea/
 node_modules/
